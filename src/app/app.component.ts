@@ -10,6 +10,8 @@ export class AppComponent {
 
   constructor(
     private exampleService: ExampleService
-  ) { }
+  ) {
+    this.exampleService.getData().subscribe(console.log);
+  }
 
 }

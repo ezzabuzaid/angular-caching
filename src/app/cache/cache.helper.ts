@@ -1,22 +1,9 @@
 
 import { HttpResponse } from '@angular/common/http';
-import { Inject, Injectable, InjectionToken } from '@angular/core';
-import { AsyncCollection, AsyncDatabase, IndexedDB, SyncDatabase, SessionStorage, LocalStorage, Entity } from '@ezzabuzaid/document-storage';
-import { from, of } from 'rxjs';
-import { map, switchMap } from 'rxjs/operators';
-
-export const INDEXED_DATABASE = new InjectionToken<AsyncDatabase>(
-    'INDEXED_DB_CACHE_DATABASE',
-    {
-        providedIn: 'root',
-        factory: () => new AsyncDatabase(new IndexedDB('cache'))
-    }
-);
-
-export const MEMORY_CACHE_DATABASE = new InjectionToken<SyncDatabase>('LOCAL_CACHE_DATABASE', {
-    providedIn: 'root',
-    factory: () => new SyncDatabase(new LocalStorage('cache'))
-});
+import { Inject, Injectable, InjectionToken, Injector } from '@angular/core';
+import { defer, from, Observable, of } from 'rxjs';
+import { map, mapTo, switchMap, tap } from 'rxjs/operators';
+import { AsyncStorage } from './storage';
 
 /**
  * class Represent the entry within the cache
@@ -42,17 +29,9 @@ export class HttpCacheEntry {
     ) { }
 }
 
-@Injectable({
-    providedIn: 'root'
-})
 export class HttpCacheHelper {
-    private collection: AsyncCollection<HttpCacheEntry> = null;
 
-    constructor(
-        @Inject(INDEXED_DATABASE) indexedDatabase: AsyncDatabase,
-    ) {
-        this.collection = indexedDatabase.collection('CACHE');
-    }
+    constructor(private storage: AsyncStorage) { }
 
     /**
      * 
@@ -64,7 +43,8 @@ export class HttpCacheHelper {
      *
      */
     public set(url: string, value: HttpResponse<any>, ttl: number) {
-        return this.collection.set(new HttpCacheEntry(url, value, this.timeToLive(ttl)));
+        return defer(() => this.storage.setItem(url, JSON.stringify(value)))
+        // return defer(() => this.collection.set(new HttpCacheEntry(url, value, this.timeToLive(ttl))));
     }
 
     /**
@@ -75,28 +55,30 @@ export class HttpCacheHelper {
      * 
      * if ttl end, the response will be deleted and null will return
      */
-    public get(url: string) {
-        return from(this.collection.get((entry) => entry.url === url))
-            .pipe(
-                switchMap((entry) => {
-                    if (entry && this.dateElapsed(entry.ttl ?? 0)) {
-                        return this.invalidateCache(entry);
-                    }
-                    return of(entry);
-                }),
-                map(response => response && new HttpResponse(response.value)),
-            );
+    public get(url: string): Observable<HttpResponse<any>> {
+        return defer(() => this.storage.getItem<string>(url))
+            .pipe(map(response => response && new HttpResponse(JSON.parse(response))))
+        // return defer(() => this.collection.get((entry) => entry.url === url))
+        //     .pipe(
+        //         // switchMap((entry) => {
+        //         //     if (entry && this.dateElapsed(entry.ttl ?? 0)) {
+        //         //         return this.invalidateCache(entry);
+        //         //     }
+        //         //     return of(entry);
+        //         // }),
+        //         tap(console.warn),
+        //     );
     }
 
     /**
      * Clear out the entire cache database
      */
     public clear() {
-        return this.collection.clear();
+        this.storage.clear();
     }
 
-    private invalidateCache(entry: Entity<HttpCacheEntry>) {
-        return this.collection.delete(entry.id).then(_ => null);
+    private invalidateCache(entry: HttpCacheEntry) {
+        return this.storage.removeItem(entry.url).then(_ => null);
     }
 
     private dateElapsed(date: number) {
